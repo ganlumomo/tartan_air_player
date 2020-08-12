@@ -1,13 +1,15 @@
 # ros
 import rospy
 import tf
+import tf2_sensor_msgs
 from sensor_msgs.msg import PointCloud2, PointField
-from geometry_msgs.msg import Pose, PoseWithCovarianceStamped
+from geometry_msgs.msg import Pose, PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Path
+from tf2_ros import TransformStamped
 
 # others
 import numpy as np
-
+from scipy.spatial.transform import Rotation as Rotation
 class TartanAirPlayerNode:
     def __init__(self):
         
@@ -20,52 +22,88 @@ class TartanAirPlayerNode:
         self.height = 320
 
         # define msg publishers
-        self.pc2_publisher = rospy.Publisher("points", PointCloud2, queue_size = 100)
-        self.pose_publisher = rospy.Publisher("pose", PoseWithCovarianceStamped, queue_size = 100)
+        self.pc2_publisher = rospy.Publisher("points", PointCloud2, queue_size = 1)
+        self.pc2_global_publisher = rospy.Publisher("points_global", PointCloud2, queue_size = 1)
+        self.pose_publisher = rospy.Publisher("pose", PoseWithCovarianceStamped, queue_size = 1)
+        self.path_publisher = rospy.Publisher("path", Path, queue_size = 1)
 
         # run node
         rospy.init_node('tartan_air_player_node', anonymous = True)
         #rospy.Rate(30)
-        seq_dir = "/home/ganlu/Downloads/depth_left/seasonsforest/seasonsforest/Easy/P001/"
+        seq_dir = "/home/ganlu/Downloads/depth_left (1)/abandonedfactory/abandonedfactory/Easy/P000/"
+        #seq_dir = "/home/ganlu/Downloads/depth_left/seasonsforest/seasonsforest/Easy/P011/"
         left_camera_pose_file = seq_dir + "pose_left.txt"
         self.read_left_camera_poses(left_camera_pose_file)
         depth_left_dir = seq_dir + "depth_left/"
-        self.process_scans(depth_left_dir, 100)
+        
+        # init path
+        self.path = Path()
+        self.path.header.frame_id = "map"
+        self.process_scans(depth_left_dir, 50)
 
     def process_scans(self, depth_left_dir, scan_num):
         for scan_id in range(scan_num):
             rospy.sleep(0.5)
+
+            stamp = rospy.Time.now()
+
             # load depth img
             depth_left_name = depth_left_dir + "%06i" % scan_id + "_left_depth.npy"
             depth_left = np.load(depth_left_name)
+            print(depth_left)
             pc = self.depth_to_pc(depth_left)
-            #print(pc)
+            print(pc)
             #print(pc.shape)
             
-            # publish points
-            pc2 = self.pc_to_pc2(pc)
-            #print(pc2)
-            self.pc2_publisher.publish(pc2)
+            # publish points in left camera
+            pc2 = self.pc_to_pc2(pc, stamp)
+            print(pc2)
+
+            # publish points in map
+            transform = TransformStamped()
+            #rotation_inv = Rotation.from_quat([self.left_camera_poses[scan_id][3], self.left_camera_poses[scan_id][4], self.left_camera_poses[scan_id][5], self.left_camera_poses[scan_id][6]]  ).inv()
+            #q_inv = rotation_inv.as_quat()
+            #trans = np.array([self.left_camera_poses[scan_id][i] for i in range(3)])
+            #print(rotation_inv.as_dcm())
+            #trans_inv = - np.dot(np.array(rotation_inv.as_dcm()) , trans)
+            #print(trans_inv)
+            transform.transform.translation.x = self.left_camera_poses[scan_id][0]
+            transform.transform.translation.y = self.left_camera_poses[scan_id][1]
+            transform.transform.translation.z = self.left_camera_poses[scan_id][2]
+            transform.transform.rotation.x = self.left_camera_poses[scan_id][3]
+            transform.transform.rotation.y = self.left_camera_poses[scan_id][4]
+            transform.transform.rotation.z = self.left_camera_poses[scan_id][5]
+            transform.transform.rotation.w = self.left_camera_poses[scan_id][6]
+            pc2_global = tf2_sensor_msgs.do_transform_cloud(pc2, transform)
+            pc2_global.header.frame_id = "map"
+            print(self.left_camera_poses[scan_id][0], self.left_camera_poses[scan_id][1], self.left_camera_poses[scan_id][2],
+                    self.left_camera_poses[scan_id][3], self.left_camera_poses[scan_id][4], self.left_camera_poses[scan_id][5],
+                    self.left_camera_poses[scan_id][6])
 
             # publish tf
-            print(self.left_camera_poses[scan_id][0])
             br = tf.TransformBroadcaster()
-            br.sendTransform((self.left_camera_poses[scan_id][0],
+            '''br.sendTransform((self.left_camera_poses[scan_id][0],
                 self.left_camera_poses[scan_id][1],
                 self.left_camera_poses[scan_id][2]),
-                tf.transformations.quaternion_inverse((self.left_camera_poses[scan_id][3],
+                ((self.left_camera_poses[scan_id][3],
                 self.left_camera_poses[scan_id][4],
                 self.left_camera_poses[scan_id][5],
                 self.left_camera_poses[scan_id][6])),
-                rospy.Time.now(),
-                "map",
-                "left_camera")
+                stamp,
+                "left_camera",
+                "map")'''
 
             # publish poses
-            pose = self.pose_with_covariance_stamped(scan_id)
+            pose = self.pose_with_covariance_stamped(scan_id, stamp)
             self.pose_publisher.publish(pose)
-            
 
+            # publish path
+            self.add_pose_to_path(scan_id, stamp)
+            self.path_publisher.publish(self.path)
+
+            # publish msgs
+            self.pc2_publisher.publish(pc2)
+            self.pc2_global_publisher.publish(pc2_global)
 
     def depth_to_pc(self, depth):
         """Transform a depth image into a point cloud with one point for each
@@ -80,20 +118,20 @@ class TartanAirPlayerNode:
         """
         rows, cols = depth.shape
         c, r = np.meshgrid(np.arange(cols), np.arange(rows), sparse=True)
-        #valid = (depth > 0) & (depth < 255)
+        valid = (depth > 0) & (depth < 255)
         #z = np.where(valid, depth / 256.0, np.nan)
         #x = np.where(valid, z * (c - cx) / fx, 0)
         #y = np.where(valid, z * (r - cy) / fy, 0)
-        z = depth
-        x = np.where(depth, z * (c - self.cx) / self.fx, 0)
-        y = np.where(depth, z * (r - self.cy) / self.fy, 0)
+        z = np.where(valid, depth, np.nan)
+        x = np.where(valid, z * (c - self.cx) / self.fx, 0)
+        y = np.where(valid, z * (r - self.cy) / self.fy, 0)
         return np.float32(np.dstack((x, y, z)))
 
-    def pc_to_pc2(self, pc):
+    def pc_to_pc2(self, pc, stamp):
         '''Converts a numpy array to a sensor_msgs.msg.PointCloud2'''
         pc2 = PointCloud2()
         pc2.header.frame_id = "left_camera"
-        pc2.header.stamp = rospy.Time.now()
+        pc2.header.stamp = stamp
         pc2.height = pc.shape[0]
         pc2.width = pc.shape[1]
         pc2.fields = [
@@ -122,11 +160,10 @@ class TartanAirPlayerNode:
         pose.orientation.w = self.left_camera_poses[scan_id][6]
         return pose
 
-
-    def pose_with_covariance_stamped(self, scan_id):
+    def pose_with_covariance_stamped(self, scan_id, stamp):
         pose = PoseWithCovarianceStamped()
-        pose.header.frame_id = "left_camera"
-        pose.header.stamp = rospy.Time.now()
+        pose.header.frame_id = "map"
+        pose.header.stamp = stamp
         # set pose
         pose.pose.pose = self.pose(scan_id)
         # set covariance
@@ -134,7 +171,12 @@ class TartanAirPlayerNode:
             pose.pose.covariance[i] = 0.0
         return pose
 
-    #def add_pose_to_path()
+    def add_pose_to_path(self, scan_id, stamp):
+        pose = PoseStamped()
+        pose.header.frame_id = "map"
+        pose.header.stamp = stamp
+        pose.pose = self.pose(scan_id)
+        self.path.poses.append(pose)
         
     def main(self):
         print("spin..")
