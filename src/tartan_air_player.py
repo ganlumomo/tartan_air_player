@@ -30,8 +30,8 @@ class TartanAirPlayerNode:
         # run node
         rospy.init_node('tartan_air_player_node', anonymous = True)
         #rospy.Rate(30)
-        seq_dir = "/home/ganlu/Downloads/depth_left (1)/abandonedfactory/abandonedfactory/Easy/P000/"
-        #seq_dir = "/home/ganlu/Downloads/depth_left/seasonsforest/seasonsforest/Easy/P011/"
+        #seq_dir = "/home/ganlu/Downloads/depth_left (1)/abandonedfactory/abandonedfactory/Easy/P000/"
+        seq_dir = "/home/ganlu/Downloads/depth_left/seasonsforest/seasonsforest/Easy/P011/"
         left_camera_pose_file = seq_dir + "pose_left.txt"
         self.read_left_camera_poses(left_camera_pose_file)
         depth_left_dir = seq_dir + "depth_left/"
@@ -39,7 +39,7 @@ class TartanAirPlayerNode:
         # init path
         self.path = Path()
         self.path.header.frame_id = "map"
-        self.process_scans(depth_left_dir, 50)
+        self.process_scans(depth_left_dir, 318)
 
     def process_scans(self, depth_left_dir, scan_num):
         for scan_id in range(scan_num):
@@ -50,14 +50,14 @@ class TartanAirPlayerNode:
             # load depth img
             depth_left_name = depth_left_dir + "%06i" % scan_id + "_left_depth.npy"
             depth_left = np.load(depth_left_name)
-            print(depth_left)
+            #print(depth_left)
             pc = self.depth_to_pc(depth_left)
             print(pc)
             #print(pc.shape)
             
             # publish points in left camera
             pc2 = self.pc_to_pc2(pc, stamp)
-            print(pc2)
+            #print(pc2)
 
             # publish points in map
             transform = TransformStamped()
@@ -146,8 +146,45 @@ class TartanAirPlayerNode:
         return pc2
 
     def read_left_camera_poses(self, left_camera_poses_file):
-        self.left_camera_poses = np.loadtxt(left_camera_poses_file)
+        left_camera_poses = np.loadtxt(left_camera_poses_file)
+        self.left_camera_poses = self.ned2cam(left_camera_poses)
         #print(self.left_camera_poses)
+    
+    def ned2cam(self, traj):
+        '''
+        transfer a ned traj to camera frame traj
+        '''
+        T = np.array([[0,1,0,0],
+                      [0,0,1,0],
+                      [1,0,0,0],
+                      [0,0,0,1]], dtype=np.float32)
+        T_inv = np.linalg.inv(T)
+        new_traj = []
+        
+        #rotation_inv = Rotation.from_quat([self.left_camera_poses[scan_id][3], self.left_camera_poses[scan_id][4], self.left_camera_poses[scan_id][5], self.left_camera_poses[scan_id][6]]  ).inv()
+        #q_inv = rotation_inv.as_quat()
+        #trans = np.array([self.left_camera_poses[scan_id][i] for i in range(3)])
+        #print(rotation_inv.as_dcm())
+        #trans_inv = - np.dot(np.array(rotation_inv.as_dcm()) , trans)
+        #print(trans_inv)
+ 
+        for tt in traj:
+            Rot = Rotation.from_quat([tt[3], tt[4], tt[5], tt[6]])
+            print(Rot.as_dcm())
+            rot = Rot.as_dcm()
+            ttt = np.array([[rot[0][0], rot[0][1], rot[0][2], tt[0]],
+                [rot[1][0], rot[1][1], rot[1][2], tt[1]],
+                [rot[2][0], rot[2][1], rot[2][2], tt[2]],
+                [0, 0, 0, 1]], dtype=np.float32)
+            tttt = T.dot(ttt).dot(T_inv)
+            Rot2 = Rotation.from_dcm([[tttt[0][0], tttt[0][1], tttt[0][2]],
+                    [tttt[1][0], tttt[1][1], tttt[1][2]],
+                    [tttt[2][0], tttt[2][1], tttt[2][2]]])
+            quad = Rot2.as_quat()
+            print(quad)
+            ttt_quad = np.array([tttt[0][3], tttt[1][3], tttt[2][3], quad[0], quad[1], quad[2], quad[3]])
+            new_traj.append(ttt_quad)
+        return np.array(new_traj)
 
     def pose(self, scan_id):
         pose = Pose()
