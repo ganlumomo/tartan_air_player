@@ -21,6 +21,11 @@ class TartanAirPlayerNode:
         self.width = 640
         self.height = 320
 
+        self.init_trans_to_ground = np.array([[1, 0, 0, 0],
+                                              [0, 0, 1, 0],
+                                              [0, -1, 0, 1],
+                                              [0, 0, 0, 1]], dtype = np.float32)
+
         # define msg publishers
         self.pc2_publisher = rospy.Publisher("points", PointCloud2, queue_size = 1)
         self.pc2_global_publisher = rospy.Publisher("points_global", PointCloud2, queue_size = 1)
@@ -52,7 +57,7 @@ class TartanAirPlayerNode:
             depth_left = np.load(depth_left_name)
             #print(depth_left)
             pc = self.depth_to_pc(depth_left)
-            print(pc)
+            #print(pc)
             #print(pc.shape)
             
             # publish points in left camera
@@ -60,7 +65,7 @@ class TartanAirPlayerNode:
             #print(pc2)
 
             # publish points in map
-            transform = TransformStamped()
+            '''transform = TransformStamped()
             #rotation_inv = Rotation.from_quat([self.left_camera_poses[scan_id][3], self.left_camera_poses[scan_id][4], self.left_camera_poses[scan_id][5], self.left_camera_poses[scan_id][6]]  ).inv()
             #q_inv = rotation_inv.as_quat()
             #trans = np.array([self.left_camera_poses[scan_id][i] for i in range(3)])
@@ -78,11 +83,11 @@ class TartanAirPlayerNode:
             pc2_global.header.frame_id = "map"
             print(self.left_camera_poses[scan_id][0], self.left_camera_poses[scan_id][1], self.left_camera_poses[scan_id][2],
                     self.left_camera_poses[scan_id][3], self.left_camera_poses[scan_id][4], self.left_camera_poses[scan_id][5],
-                    self.left_camera_poses[scan_id][6])
+                    self.left_camera_poses[scan_id][6])'''
 
             # publish tf
             br = tf.TransformBroadcaster()
-            '''br.sendTransform((self.left_camera_poses[scan_id][0],
+            br.sendTransform((self.left_camera_poses[scan_id][0],
                 self.left_camera_poses[scan_id][1],
                 self.left_camera_poses[scan_id][2]),
                 ((self.left_camera_poses[scan_id][3],
@@ -91,7 +96,7 @@ class TartanAirPlayerNode:
                 self.left_camera_poses[scan_id][6])),
                 stamp,
                 "left_camera",
-                "map")'''
+                "map")
 
             # publish poses
             pose = self.pose_with_covariance_stamped(scan_id, stamp)
@@ -103,7 +108,7 @@ class TartanAirPlayerNode:
 
             # publish msgs
             self.pc2_publisher.publish(pc2)
-            self.pc2_global_publisher.publish(pc2_global)
+            #self.pc2_global_publisher.publish(pc2_global)
 
     def depth_to_pc(self, depth):
         """Transform a depth image into a point cloud with one point for each
@@ -170,18 +175,18 @@ class TartanAirPlayerNode:
  
         for tt in traj:
             Rot = Rotation.from_quat([tt[3], tt[4], tt[5], tt[6]])
-            print(Rot.as_dcm())
+            #print(Rot.as_dcm())
             rot = Rot.as_dcm()
             ttt = np.array([[rot[0][0], rot[0][1], rot[0][2], tt[0]],
                 [rot[1][0], rot[1][1], rot[1][2], tt[1]],
                 [rot[2][0], rot[2][1], rot[2][2], tt[2]],
                 [0, 0, 0, 1]], dtype=np.float32)
-            tttt = T.dot(ttt).dot(T_inv)
+            tttt = self.init_trans_to_ground.dot(T).dot(ttt).dot(T_inv)
             Rot2 = Rotation.from_dcm([[tttt[0][0], tttt[0][1], tttt[0][2]],
                     [tttt[1][0], tttt[1][1], tttt[1][2]],
                     [tttt[2][0], tttt[2][1], tttt[2][2]]])
             quad = Rot2.as_quat()
-            print(quad)
+            #print(quad)
             ttt_quad = np.array([tttt[0][3], tttt[1][3], tttt[2][3], quad[0], quad[1], quad[2], quad[3]])
             new_traj.append(ttt_quad)
         return np.array(new_traj)
