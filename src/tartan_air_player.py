@@ -2,7 +2,9 @@
 import rospy
 import tf
 import tf2_sensor_msgs
-from sensor_msgs.msg import PointCloud2, PointField
+import cv2
+from sensor_msgs.msg import PointCloud2, PointField, Image
+from cv_bridge import CvBridge
 from geometry_msgs.msg import Pose, PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Path
 from tf2_ros import TransformStamped
@@ -10,6 +12,19 @@ from tf2_ros import TransformStamped
 # others
 import numpy as np
 from scipy.spatial.transform import Rotation as Rotation
+
+def seg2vis(segnp):
+    colors = [(205, 92, 92), (0, 255, 0), (199, 21, 133), (32, 178, 170), (233, 150, 122), (0, 0, 255), (128, 0, 0), (255, 0, 0), (255, 0, 255), (176, 196, 222), (139, 0, 139), (102, 205, 170), (128, 0, 128), (0, 255, 255), (0, 255, 255), (127, 255, 212), (222, 184, 135), (128, 128, 0), (255, 99, 71), (0, 128, 0), (218, 165, 32), (100, 149, 237), (30, 144, 255), (255, 0, 255), (112, 128, 144), (72, 61, 139), (165, 42, 42), (0, 128, 128), (255, 255, 0), (255, 182, 193), (107, 142, 35), (0, 0, 128), (135, 206, 235), (128, 0, 0), (0, 0, 255), (160, 82, 45), (0, 128, 128), (128, 128, 0), (25, 25, 112), (255, 215, 0), (154, 205, 50), (205, 133, 63), (255, 140, 0), (220, 20, 60), (255, 20, 147), (95, 158, 160), (138, 43, 226), (127, 255, 0), (123, 104, 238), (255, 160, 122), (92, 205, 92),]
+    #segvis = np.zeros(segnp.shape+(3,), dtype=np.uint8)
+    segvis = np.zeros(segnp.shape, dtype=np.uint8)
+    for k in range(256):
+        mask = segnp==k
+        colorind = k % len(colors)
+        if np.sum(mask)>0:
+            #segvis[mask,:] = colors[colorind]
+            segvis[mask] = colorind
+    return segvis
+
 class TartanAirPlayerNode:
     def __init__(self):
         
@@ -26,35 +41,57 @@ class TartanAirPlayerNode:
                                               [0, -1, 0, 1],
                                               [0, 0, 0, 1]], dtype = np.float32)
 
+        self.br = CvBridge()
+
         # define msg publishers
         self.pc2_publisher = rospy.Publisher("points", PointCloud2, queue_size = 1)
-        self.pc2_global_publisher = rospy.Publisher("points_global", PointCloud2, queue_size = 1)
+        #self.pc2_global_publisher = rospy.Publisher("points_global", PointCloud2, queue_size = 1)
         self.pose_publisher = rospy.Publisher("pose", PoseWithCovarianceStamped, queue_size = 1)
         self.path_publisher = rospy.Publisher("path", Path, queue_size = 1)
+        self.left_color_image_publisher = rospy.Publisher("left_color_image", Image, queue_size = 1)
+        self.left_depth_image_publisher = rospy.Publisher("left_depth_image", Image, queue_size = 1)
 
         # run node
         rospy.init_node('tartan_air_player_node', anonymous = True)
         #rospy.Rate(30)
-        #seq_dir = "/home/ganlu/Downloads/depth_left (1)/abandonedfactory/abandonedfactory/Easy/P000/"
-        seq_dir = "/home/ganlu/Downloads/depth_left/seasonsforest/seasonsforest/Easy/P011/"
+        seq_dir ="/media/ganlu/Samsung_T51/000_tro2020/tartanair-release1/abandonedfactory/Easy/P002/"
         left_camera_pose_file = seq_dir + "pose_left.txt"
         self.read_left_camera_poses(left_camera_pose_file)
-        depth_left_dir = seq_dir + "depth_left/"
+        self.depth_left_dir = seq_dir + "depth_left/"
+        self.image_left_dir = seq_dir + "image_left/"
+        self.seg_left_dir = seq_dir + "seg_left/"
         
         # init path
         self.path = Path()
         self.path.header.frame_id = "map"
-        self.process_scans(depth_left_dir, 318)
+        self.process_scans(3717)
 
-    def process_scans(self, depth_left_dir, scan_num):
+
+    def process_scans(self, scan_num):
         for scan_id in range(scan_num):
-            rospy.sleep(0.5)
+            rospy.sleep(3.5)
 
             stamp = rospy.Time.now()
 
+            # load seg img
+            #seg_left_name = self.seg_left_dir + "%06i" % scan_id + "_left_seg.npy"
+            #seg_left = np.load(seg_left_name)
+            #seg_left_vis = seg2vis(seg_left)
+            #filename = seg_left_name[:len(seg_left_name)-8] + ".png"
+            #print(filename)
+            #cv2.imwrite(filename, seg_left_vis)
+
+            # load left img
+            image_left_name = self.image_left_dir + "%06i" % scan_id + "_left.png"
+            print(image_left_name)
+            image_left = cv2.imread(image_left_name)
+            #print(image_left)
+            self.left_color_image_publisher.publish(self.br.cv2_to_imgmsg(image_left))
+
             # load depth img
-            depth_left_name = depth_left_dir + "%06i" % scan_id + "_left_depth.npy"
+            depth_left_name = self.depth_left_dir + "%06i" % scan_id + "_left_depth.npy"
             depth_left = np.load(depth_left_name)
+            self.left_depth_image_publisher.publish(self.br.cv2_to_imgmsg(depth_left))
             #print(depth_left)
             pc = self.depth_to_pc(depth_left)
             #print(pc)
