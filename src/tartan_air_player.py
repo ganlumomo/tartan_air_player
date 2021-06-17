@@ -34,7 +34,7 @@ class TartanAirPlayerNode:
         self.cx = 320.0 # optical center x
         self.cy = 240.0 # optical center y
         self.width = 640
-        self.height = 320
+        self.height = 480
 
         self.init_trans_to_ground = np.array([[1, 0, 0, 0],
                                               [0, 0, 1, 0],
